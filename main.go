@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"time"
 )
 
 type job struct {
@@ -18,7 +20,7 @@ type ReportProcessor struct {
 }
 
 type JobProcessor interface {
-	Process(job) error
+	Process(context.Context, job) error
 }
 
 var ErrEmptyEmail = errors.New("email information is empty")
@@ -32,41 +34,43 @@ func (r ReportProcessor) Process(j job) error {
 	return nil
 }
 
-func (e EmailProcessor) Process(j job) error {
+func (e EmailProcessor) Process(ctx context.Context, j job) error {
+	err := ctx.Err()
+	if err != nil {
+		return err
+	}
 	if j.jobInfo == "" {
 		return ErrEmptyEmail
 	}
-	fmt.Printf("Job Id:%s\n email:%s\n", j.id, j.jobInfo)
-	return nil
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(5 * time.Second):
+		fmt.Printf("Job Id:%s\n email:%s\n", j.id, j.jobInfo)
+		return nil
+	}
 }
 
-func runJob(jp JobProcessor, j job) error {
-	err := jp.Process(j)
+func runJob(ctx context.Context, jp JobProcessor, j job) error {
+	err := jp.Process(ctx, j)
 	if err != nil {
-		return fmt.Errorf("Job %s: %v", j.id, err)
+		return fmt.Errorf("Job %s: %w", j.id, err)
 	}
 	return nil
 }
 
 func main() {
 	emailJob := job{id: "001", jobInfo: "1", jobType: "email"}
-	err := runJob(EmailProcessor{}, emailJob)
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	err := runJob(ctx, EmailProcessor{}, emailJob)
+
 	if errors.Is(err, ErrEmptyEmail) {
 		fmt.Print("Please provide email information")
 		return
 	}
 	if err != nil {
-		fmt.Print("Job failed:%s", err)
-		return
-	}
-	reportJob := job{id: "002", jobInfo: "", jobType: "report"}
-	err = runJob(ReportProcessor{}, reportJob)
-	if errors.Is(err, ErrEmptyReport) {
-		fmt.Print("Please provide report Information")
-		return
-	}
-	if err != nil {
-		fmt.Print("Job failed:%s", err)
+		fmt.Printf("Job failed:%s", err)
 		return
 	}
 	fmt.Println("Job completed")
